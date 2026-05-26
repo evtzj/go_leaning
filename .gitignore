@@ -2,3 +2,6 @@
 *.exe
 *.out
 *.test
+/go_first/student_manager/student_manager
+*.exe
+*.out
