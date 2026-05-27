@@ -100,6 +100,53 @@ func main() {
 			return
 		}
 		fmt.Println("已清理所有已完成的任务")
+
+	case "update":
+		if len(os.Args) < 4 {
+			fmt.Println("请提供要删除的代办ID和标题")
+			return
+		}
+		id, err := strconv.Atoi(os.Args[2])
+		if err != nil {
+			fmt.Println("ID必须是数字")
+			return
+		}
+		title := os.Args[3]
+		res := update(todos, id, title)
+		if !res {
+			fmt.Println("更新失败")
+		}
+		if err := saveTodos(todos); err != nil {
+			fmt.Println("保存失败")
+			return
+		}
+		fmt.Println("更新成功")
+	case "listDone":
+		listDoneTodo(todos)
+	case "listUndone":
+		listUndoneTodo(todos)
+	case "unDone":
+		if len(os.Args) < 3 {
+			fmt.Println("请输入要完成的ID")
+			return
+		}
+		id, err := strconv.Atoi(os.Args[2])
+		if err != nil {
+			fmt.Println("ID必须是数字")
+			return
+		}
+		ok := unDoneTodo(todos, id)
+		if !ok {
+			fmt.Println("没有找到这个代办")
+			return
+		}
+		if err := saveTodos(todos); err != nil {
+			fmt.Println("保存失败")
+			return
+		}
+		fmt.Println("已取消完成")
+	case "stats":
+		stats(todos)
 	default:
 		fmt.Println("未知指令")
 	}
@@ -199,4 +246,80 @@ func clearTodos(todos []todo) []todo {
 		}
 	}
 	return newtodos
+}
+
+func update(todos []todo, id int, title string) bool {
+	for _, Todo := range todos {
+		if Todo.ID == id {
+			Todo.Title = title
+			return true
+		}
+	}
+	return false
+}
+
+func listDoneTodo(todos []todo) {
+	if len(todos) == 0 {
+		fmt.Println("暂无代办")
+		return
+	}
+
+	for _, todo := range todos {
+		status := "未完成"
+		if todo.Done {
+			status = "已完成"
+			fmt.Printf("%d %s [%s]\n", todo.ID, todo.Title, status)
+		}
+
+	}
+}
+
+func listUndoneTodo(todos []todo) {
+	if len(todos) == 0 {
+		fmt.Println("暂无代办")
+		return
+	}
+
+	for _, todo := range todos {
+		if !todo.Done {
+			status := "未完成"
+			fmt.Printf("%d %s [%s]\n", todo.ID, todo.Title, status)
+		}
+
+	}
+}
+
+// 取消完成状态
+func unDoneTodo(todos []todo, id int) bool {
+	for i := range todos {
+		if todos[i].ID == id {
+			if !todos[i].Done {
+				fmt.Println("该任务本来就没有完成")
+				return true
+			}
+			todos[i].Done = false
+			return true
+		}
+	}
+	return false
+}
+
+// 统计任务数量
+func stats(todos []todo) {
+
+	done := 0
+	undone := 0
+	total := len(todos)
+	if total == 0 {
+		fmt.Println("不存在任务")
+		return
+	}
+	for _, todo := range todos {
+		if todo.Done == true {
+			done++
+		} else {
+			undone++
+		}
+	}
+	fmt.Printf("总任务数为:%d 已完成任务数为:%d ,未完成数为: %d", total, done, undone)
 }
