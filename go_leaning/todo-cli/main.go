@@ -89,7 +89,17 @@ func main() {
 			return
 		}
 		fmt.Println("删除成功")
-
+	case "clear":
+		clearedTodo := clearTodos(todos)
+		if len(clearedTodo) == len(todos) {
+			fmt.Println("没有要清理的已完成的任务")
+			return
+		}
+		if err := saveTodos(clearedTodo); err != nil {
+			fmt.Println("保存失败", err)
+			return
+		}
+		fmt.Println("已清理所有已完成的任务")
 	default:
 		fmt.Println("未知指令")
 	}
@@ -179,4 +189,14 @@ func deleteTodo(todos []todo, id int) []todo {
 		}
 	}
 	return todos
+}
+
+func clearTodos(todos []todo) []todo {
+	var newtodos []todo
+	for _, Todo := range todos {
+		if !Todo.Done {
+			newtodos = append(newtodos, Todo)
+		}
+	}
+	return newtodos
 }
