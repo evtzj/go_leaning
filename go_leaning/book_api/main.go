@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 type Book struct {
@@ -16,6 +18,7 @@ type Book struct {
 }
 
 type Store struct {
+	sync.RWMutex
 	books  []Book
 	nextID int
 }
@@ -24,8 +27,14 @@ const dataFile = "book.json"
 
 func main() {
 	fmt.Println("book_api started")
-	store := newStore()
+	books, err := loadBook()
+	if err != nil {
+		fmt.Println("读取数据失败", err)
+		return
+	}
+	store := newStore(books)
 
+	// testConcurrency(store)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/books", booksHandler(store))
 	mux.HandleFunc("/books/", bookByIDHandler(store))
@@ -37,13 +46,53 @@ func main() {
 
 }
 
-func newStore() *Store {
+func newStore(books []Book) *Store {
 	return &Store{
-		books:  []Book{},
-		nextID: 1,
+		books:  books,
+		nextID: nextID(books),
 	}
 }
+func loadBook() ([]Book, error) {
+	data, err := os.ReadFile(dataFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []Book{}, nil
+		}
+		return nil, err
+	}
+	if len(data) == 0 {
+		return []Book{}, nil
+	}
+
+	var books []Book
+	if err := json.Unmarshal(data, &books); err != nil {
+		return nil, err
+	}
+	return books, nil
+}
+
+func saveBook(books []Book) error {
+	data, err := json.MarshalIndent(books, "", " ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dataFile, data, 0644)
+}
+
+func nextID(books []Book) int {
+	maxID := 0
+	for _, book := range books {
+		if book.ID > maxID {
+			maxID = book.ID
+		}
+	}
+	return maxID + 1
+}
+
 func (s *Store) Add(title, author string) Book {
+	s.Lock()
+	defer s.Unlock()
+
 	book := Book{
 		ID:     s.nextID,
 		Title:  title,
@@ -51,14 +100,22 @@ func (s *Store) Add(title, author string) Book {
 	}
 	s.books = append(s.books, book)
 	s.nextID++
+	saveBook(s.books)
 	return book
 }
 
 func (s *Store) List() []Book {
-	return s.books
+	s.RLock()
+	defer s.RUnlock()
+	list := make([]Book, len(s.books))
+	copy(list, s.books)
+
+	return list
 }
 
 func (s *Store) Get(id int) (Book, bool) {
+	s.Lock()
+	defer s.Unlock()
 	for i := range s.books {
 		if s.books[i].ID == id {
 			return s.books[i], true
@@ -68,23 +125,31 @@ func (s *Store) Get(id int) (Book, bool) {
 }
 
 func (s *Store) Delete(id int) bool {
+	s.Lock()
+	defer s.Unlock()
 	for i := range s.books {
 		if s.books[i].ID == id {
 			s.books = append(s.books[:i], s.books[i+1:]...)
+			saveBook(s.books)
 			return true
 		}
 	}
+
 	return false
 }
 
 func (s *Store) Update(id int, title string, author string) (Book, bool) {
+	s.Lock()
+	defer s.Unlock()
 	for i := range s.books {
 		if s.books[i].ID == id {
 			s.books[i].Title = title
 			s.books[i].Author = author
+			saveBook(s.books)
 			return s.books[i], true
 		}
 	}
+
 	return Book{}, false
 }
 
@@ -177,4 +242,30 @@ func bookByIDHandler(store *Store) http.HandlerFunc {
 		}
 
 	}
+}
+
+func testConcurrency(store *Store) {
+	var wg sync.WaitGroup
+	const count = 100 // 模拟 100 个并发操作
+
+	// 1. 测试并发写入 (Add)
+	for i := 0; i < count; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			store.Add(fmt.Sprintf("Book %d", n), "Author")
+		}(i)
+	}
+
+	// 2. 测试并发读取 (List)
+	for i := 0; i < count; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = store.List()
+		}()
+	}
+
+	wg.Wait()
+	fmt.Printf("并发测试完成，当前总数: %d\n", len(store.List()))
 }
