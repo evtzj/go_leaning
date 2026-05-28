@@ -249,9 +249,9 @@ func clearTodos(todos []todo) []todo {
 }
 
 func update(todos []todo, id int, title string) bool {
-	for _, Todo := range todos {
-		if Todo.ID == id {
-			Todo.Title = title
+	for i := range todos {
+		if todos[i].ID == id {
+			todos[i].Title = title
 			return true
 		}
 	}
