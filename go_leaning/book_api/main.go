@@ -1,38 +1,37 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
 )
 
 type Book struct {
-	ID     int
-	Title  string
-	Author string
+	ID     int    `json:"id"`
+	Title  string `json:"title"`
+	Author string `json:"author"`
 }
 
 type Store struct {
-	sync.RWMutex
-	books  []Book
-	nextID int
+	db *sql.DB
 }
 
 const dataFile = "book.json"
 
 func main() {
 	fmt.Println("book_api started")
-	books, err := loadBook()
+	db, err := openDB()
 	if err != nil {
-		fmt.Println("读取数据失败", err)
+		fmt.Println("打开数据库失败", err)
 		return
 	}
-	store := newStore(books)
+	defer db.Close()
+	store := newStore(db)
 
 	// testConcurrency(store)
 	mux := http.NewServeMux()
@@ -46,119 +45,91 @@ func main() {
 
 }
 
-func newStore(books []Book) *Store {
-	return &Store{
-		books:  books,
-		nextID: nextID(books),
-	}
+func newStore(db *sql.DB) *Store {
+	return &Store{db: db}
 }
-func loadBook() ([]Book, error) {
-	data, err := os.ReadFile(dataFile)
+
+func (s *Store) Add(title, author string) (Book, error) {
+	result, err := s.db.Exec(`INSERT INTO books (title,author) VALUES(?,?)`, title, author)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return []Book{}, nil
-		}
+		return Book{}, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return Book{}, err
+	}
+	return Book{ID: int(id), Title: title, Author: author}, nil
+}
+
+func (s *Store) List() ([]Book, error) {
+	rows, err := s.db.Query(`SELECT id, title, author FROM books ORDER BY id`)
+	if err != nil {
 		return nil, err
 	}
-	if len(data) == 0 {
-		return []Book{}, nil
+	defer rows.Close()
+	books := make([]Book, 0)
+	for rows.Next() {
+		var book Book
+		if err := rows.Scan(&book.ID, &book.Title, &book.Author); err != nil {
+			return nil, err
+		}
+		books = append(books, book)
 	}
 
-	var books []Book
-	if err := json.Unmarshal(data, &books); err != nil {
-		return nil, err
-	}
-	return books, nil
+	return books, rows.Err()
 }
 
-func saveBook(books []Book) error {
-	data, err := json.MarshalIndent(books, "", " ")
+func (s *Store) Get(id int) (Book, bool, error) {
+	var book Book
+	err := s.db.QueryRow(`SELECT id ,title,author FROM books WHERE id = ?`, id).Scan(&book.ID, &book.Title, &book.Author)
 	if err != nil {
-		return err
-	}
-	return os.WriteFile(dataFile, data, 0644)
-}
-
-func nextID(books []Book) int {
-	maxID := 0
-	for _, book := range books {
-		if book.ID > maxID {
-			maxID = book.ID
+		if err == sql.ErrNoRows {
+			return Book{}, false, nil
 		}
-	}
-	return maxID + 1
-}
-
-func (s *Store) Add(title, author string) Book {
-	s.Lock()
-	defer s.Unlock()
-
-	book := Book{
-		ID:     s.nextID,
-		Title:  title,
-		Author: author,
-	}
-	s.books = append(s.books, book)
-	s.nextID++
-	saveBook(s.books)
-	return book
-}
-
-func (s *Store) List() []Book {
-	s.RLock()
-	defer s.RUnlock()
-	list := make([]Book, len(s.books))
-	copy(list, s.books)
-
-	return list
-}
-
-func (s *Store) Get(id int) (Book, bool) {
-	s.Lock()
-	defer s.Unlock()
-	for i := range s.books {
-		if s.books[i].ID == id {
-			return s.books[i], true
-		}
-	}
-	return Book{}, false
-}
-
-func (s *Store) Delete(id int) bool {
-	s.Lock()
-	defer s.Unlock()
-	for i := range s.books {
-		if s.books[i].ID == id {
-			s.books = append(s.books[:i], s.books[i+1:]...)
-			saveBook(s.books)
-			return true
-		}
+		return Book{}, false, err
 	}
 
-	return false
+	return book, true, nil
 }
 
-func (s *Store) Update(id int, title string, author string) (Book, bool) {
-	s.Lock()
-	defer s.Unlock()
-	for i := range s.books {
-		if s.books[i].ID == id {
-			s.books[i].Title = title
-			s.books[i].Author = author
-			saveBook(s.books)
-			return s.books[i], true
-		}
+func (s *Store) Delete(id int) (bool, error) {
+	result, err := s.db.Exec(`DELETE FROM books WHERE id = ?`, id)
+	if err != nil {
+		return false, err
 	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
 
-	return Book{}, false
+func (s *Store) Update(id int, title string, author string) (Book, bool, error) {
+	result, err := s.db.Exec(`UPDATE books SET title = ?, author = ? WHERE id = ?`, title, author, id)
+	if err != nil {
+		return Book{}, false, err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return Book{}, false, err
+	}
+	if count == 0 {
+		return Book{}, false, nil
+	}
+	return Book{ID: id, Title: title, Author: author}, true, nil
 }
 
 func booksHandler(store *Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
+			books, err := store.List()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			if err := json.NewEncoder(w).Encode(store.List()); err != nil {
+			if err := json.NewEncoder(w).Encode(books); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -167,6 +138,7 @@ func booksHandler(store *Store) http.HandlerFunc {
 				Title  string `json:"title"`
 				Author string `json:"author"`
 			}
+			defer r.Body.Close()
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				http.Error(w, "json不对", http.StatusBadRequest)
 				return
@@ -176,9 +148,16 @@ func booksHandler(store *Store) http.HandlerFunc {
 				http.Error(w, "标题为空", http.StatusBadRequest)
 				return
 			}
-			book := store.Add(req.Title, req.Author)
+			books, err := store.Add(req.Title, req.Author)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			json.NewEncoder(w).Encode(book)
+			if err := json.NewEncoder(w).Encode(books); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -202,20 +181,28 @@ func bookByIDHandler(store *Store) http.HandlerFunc {
 		}
 		switch r.Method {
 		case http.MethodGet:
-			book, ok := store.Get(id)
+			book, ok, err := store.Get(id)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 			if !ok {
 				http.Error(w, "没找到书", http.StatusNotFound)
 				return
 			}
-			w.Header().Set("Content-Type", "application/json;charset=utf-8")
-			json.NewEncoder(w).Encode(book)
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			if err := json.NewEncoder(w).Encode(book); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		case http.MethodPut:
 			var req struct {
 				Title  string `json:"title"`
 				Author string `json:"author"`
 			}
+			defer r.Body.Close()
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "jaon不对", http.StatusBadRequest)
+				http.Error(w, "json不对", http.StatusBadRequest)
 				return
 			}
 			req.Title = strings.TrimSpace(req.Title)
@@ -223,15 +210,27 @@ func bookByIDHandler(store *Store) http.HandlerFunc {
 				http.Error(w, "标题为空", http.StatusBadRequest)
 				return
 			}
-			updated, ok := store.Update(id, req.Title, req.Author)
+			updated, ok, err := store.Update(id, req.Title, req.Author)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 			if !ok {
-				http.Error(w, "title required", http.StatusNotFound)
+				http.Error(w, "没找到书", http.StatusNotFound)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			json.NewEncoder(w).Encode(updated)
+			if err := json.NewEncoder(w).Encode(updated); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		case http.MethodDelete:
-			if !store.Delete(id) {
+			isDelete, err := store.Delete(id)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if !isDelete {
 				http.Error(w, "没找到书", http.StatusNotFound)
 				return
 			}
@@ -262,10 +261,11 @@ func testConcurrency(store *Store) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_ = store.List()
+			_, _ = store.List()
 		}()
 	}
 
 	wg.Wait()
-	fmt.Printf("并发测试完成，当前总数: %d\n", len(store.List()))
+	books, _ := store.List()
+	fmt.Printf("并发测试完成，当前总数: %d\n", len(books))
 }
