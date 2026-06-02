@@ -20,5 +20,9 @@ func Migrate() error {
 	return DB.AutoMigrate(
 		&model.TeacherProfile{},
 		&model.User{},
+		&model.ChatMessage{},
+		&model.Match{},
+		&model.TeacherFavorite{},
+		&model.Order{},
 	)
 }

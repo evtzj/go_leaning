@@ -19,7 +19,7 @@ type Match struct {
 	Student   User           `gorm:"foreignKey:StudentID;constraint:OnDelete:CASCADE;" json:"student"`
 	TeacherID uint           `gorm:"not null" json:"teacher_id"`
 	Teacher   TeacherProfile `gorm:"foreignKey:TeacherID;constraint:OnDelete:CASCADE;" json:"teacher"`
-	Subject   string         `gorm:"type:varvhar(100);not null" json:"subject"`
-	Message   *string        `gorm:"typr:text" json:"message"`
-	Status    MatchStatus    `gorm:"type: varchar(20);default:'pending';not null" json:"status"`
+	Subject   string         `gorm:"type:varchar(100);not null" json:"subject"`
+	Message   *string        `gorm:"type:text" json:"message"`
+	Status    MatchStatus    `gorm:"type:varchar(20);default:'pending';not null" json:"status"`
 }
