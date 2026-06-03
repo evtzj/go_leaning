@@ -7,7 +7,7 @@ type User struct {
 	Username string `gorm:"uniqueIndex;not null" json:"username"`
 	Password string `gorm:"not null" json:"-"`
 	Phone    string `gorm:"uniqueIndex;not null" json:"phone"`
-	Role     string `gorm:"default:student;not null" json:"role"`
+	Role     string `gorm:"default;student;not null" json:"role"`
 }
 
 type TeacherProfile struct {
