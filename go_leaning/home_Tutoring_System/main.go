@@ -26,8 +26,9 @@ func main() {
 	})
 
 	userGroup := r.Group("/api/user")
-	router.RegisterUserRouter(userGroup)
-
+	orderGroup := r.Group("/api/order")
+	router.UserRouter(userGroup)
+	router.OrderRouter(orderGroup)
 	log.Println("家教系统启动在", config.Port)
 	if err := r.Run(config.Port); err != nil {
 		log.Fatal("启动失败", err)
