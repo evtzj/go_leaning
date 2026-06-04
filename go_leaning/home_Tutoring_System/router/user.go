@@ -2,6 +2,7 @@ package router
 
 import (
 	"home_Tutoring_System/handler"
+	"home_Tutoring_System/middleware"
 
 	"github.com/gin-gonic/gin"
 )
@@ -10,4 +11,11 @@ import (
 // 这里的 group 通常会传入 /api/user，所以完整路径是 /api/user/register。
 func RegisterUserRouter(group *gin.RouterGroup) {
 	group.POST("/register", handler.Register)
+	group.POST("/login", handler.Login)
+
+	auto := group.Group("")
+	auto.Use(middleware.AuthRequired())
+
+	auto.GET(("/me"), handler.MeView)
+	auto.POST("/me", handler.MeView)
 }

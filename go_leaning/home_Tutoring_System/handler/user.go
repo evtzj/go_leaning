@@ -1,10 +1,11 @@
 package handler
 
 import (
-	"net/http"
-
 	"home_Tutoring_System/database"
 	"home_Tutoring_System/model"
+	"net/http"
+
+	"gorm.io/gorm"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -23,7 +24,13 @@ type RegisterRequest struct {
 
 // LoginRequest 对应前端传来的json数据
 type LoginRequest struct {
-	Username string `json:"username" `
+	Username string `json:"username" binding:"required_without=phone"`
+	Phone    string `json:"phone" binding:"required_without=username"`
+	Password string `json:"password" binding:"required,min=6"`
+}
+
+type UpdateMeView struct {
+	Username string `json:"new_name"`
 }
 
 // Register 用户注册接口。
@@ -137,4 +144,82 @@ func Register(c *gin.Context) {
 			"role":     user.Role,
 		},
 	})
+}
+
+func Login(c *gin.Context) {
+	var req LoginRequest
+
+	// 1. 解析 JSON 请求体，并做基础校验。
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "参数错误",
+			"errors":  err.Error(),
+		})
+		return
+	}
+
+	var user model.User
+
+	err := database.DB.Where("username= ? OR phone = ? ", req.Username, req.Phone).First(&user).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(401, gin.H{"error": "账号不存在"})
+		} else {
+			c.JSON(500, gin.H{"error": "数据库错误"})
+		}
+		return
+	}
+	err = bcrypt.CompareHashAndPassword([]byte(req.Password), []byte(user.Password))
+	if err != nil {
+		c.JSON(401, gin.H{"error": "密码错误"})
+		return
+	}
+
+}
+
+func MeView(c *gin.Context) {
+	if c.Request.Method == http.MethodGet {
+		userID := c.GetUint("userID")
+
+		var user model.User
+		if err := database.DB.First(&user, userID).Error; err != nil {
+			c.JSON(404, gin.H{"message": "用户不存在"})
+			return
+		}
+
+		c.JSON(200, gin.H{
+			"message": "获取个人身份信息成功",
+			"data": gin.H{
+				"id":       user.ID,
+				"username": user.Username,
+				"phone":    user.Phone,
+				"role":     user.Role,
+			},
+		})
+	}
+	if c.Request.Method == http.MethodPost {
+		var req UpdateMeView
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{
+				"message": "参数错误",
+				"error":   err,
+			})
+		}
+		var user model.User
+		userID := c.GetUint("userID")
+		if err := database.DB.First(&user, userID).Error; err != nil {
+			c.JSON(404, gin.H{
+				"message": "用户不存在",
+				"error":   err,
+			})
+		}
+		if req.Username != "" {
+			user.Username = req.Username
+		}
+		if err := database.DB.Save(&user).Error; err != nil {
+			c.JSON(500, gin.H{"message": "修改失败"})
+			return
+		}
+		c.JSON(200, gin.H{"message": "修改成功"})
+	}
 }
