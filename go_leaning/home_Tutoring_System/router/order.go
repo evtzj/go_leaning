@@ -15,5 +15,6 @@ func OrderRouter(group *gin.RouterGroup) {
 	auto.Use(middleware.AuthRequired())
 
 	auto.POST("/create", handler.CreateOrder)
+	auto.GET("", handler.ListOrders)
 	auto.GET("/:id", handler.ViewOrder)
 }

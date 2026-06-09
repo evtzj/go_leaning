@@ -19,6 +19,19 @@ type CreateOrderRequest struct {
 	Remarks       string    `json:"remarks" binding:"required"`
 }
 
+type OrderListItem struct {
+	ID              uint              `json:"id"`
+	StudentUsername string            `json:"student_username"`
+	TeacherUsername string            `json:"teacher_username"`
+	Subject         string            `json:"subject"`
+	ScheduledTime   time.Time         `json:"scheduled_time"`
+	Duration        int               `json:"duration"`
+	Status          model.OrderStatus `json:"status"`
+	Price           float64           `json:"price"`
+	Address         string            `json:"address"`
+	Remarks         *string           `json:"remarks"`
+}
+
 func CreateOrder(c *gin.Context) {
 	var req CreateOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -49,6 +62,54 @@ func CreateOrder(c *gin.Context) {
 		return
 	}
 	c.JSON(201, gin.H{"message": "创建成功"})
+}
+
+func ListOrders(c *gin.Context) {
+	userID := c.GetUint("userID")
+	role := c.GetString("role")
+
+	var orders []model.Order
+	query := database.DB.Preload("Student").Preload("Teacher.User").Order("created_at DESC")
+
+	if role == "student" {
+		query = query.Where("student_id = ?", userID)
+	} else if role == "teacher" {
+		var teacher model.TeacherProfile
+		if err := database.DB.Where("user_id = ?", userID).First(&teacher).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"message": "老师信息不存在"})
+			return
+		}
+		query = query.Where("teacher_id = ?", teacher.ID)
+	} else if role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{"message": "身份类型无权限"})
+		return
+	}
+
+	if err := query.Find(&orders).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "查询订单列表失败"})
+		return
+	}
+
+	list := make([]OrderListItem, 0, len(orders))
+	for _, order := range orders {
+		list = append(list, OrderListItem{
+			ID:              order.ID,
+			StudentUsername: order.Student.Username,
+			TeacherUsername: order.Teacher.User.Username,
+			Subject:         order.Subject,
+			ScheduledTime:   order.ScheduledTime,
+			Duration:        order.Duration,
+			Status:          order.Status,
+			Price:           order.Price,
+			Address:         order.Address,
+			Remarks:         order.Remarks,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "查询成功",
+		"data":    list,
+	})
 }
 
 func ViewOrder(c *gin.Context) {
