@@ -16,6 +16,7 @@ func UserRouter(group *gin.RouterGroup) {
 	auto := group.Group("")
 	auto.Use(middleware.AuthRequired())
 
+	auto.POST("/logout", handler.Logout)
 	auto.GET(("/me"), handler.MeView)
 	auto.POST("/me", handler.MeView)
 }

@@ -14,7 +14,7 @@ type TeacherProfile struct {
 	gorm.Model
 	UserID          uint   `gorm:"uniqueIndex;not null" json:"user_id"`
 	User            User   `gorm:"foreignKey:UserID" json:"-"`
-	TeacheringYears int    `gorm:"default" json:"teaching_years"`
+	TeacheringYears int    `gorm:"default:0" json:"teaching_years"`
 	Subject         string `gorm:"not null" json:"subject"`
 	Education       string `json:"education"`
 	CertificateImg  string `json:"certificate_img"`

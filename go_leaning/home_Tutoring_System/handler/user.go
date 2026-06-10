@@ -9,6 +9,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
+
+	"time"
+
+	"home_Tutoring_System/config"
+	"home_Tutoring_System/middleware"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // RegisterRequest 对应前端注册时传过来的 JSON 数据。
@@ -24,8 +31,8 @@ type RegisterRequest struct {
 
 // LoginRequest 对应前端传来的json数据
 type LoginRequest struct {
-	Username string `json:"username" binding:"required_without=phone"`
-	Phone    string `json:"phone" binding:"required_without=username"`
+	Username string `json:"username" binding:"required_without=Phone"`
+	Phone    string `json:"phone" binding:"required_without=Username"`
 	Password string `json:"password" binding:"required,min=6"`
 }
 
@@ -146,6 +153,21 @@ func Register(c *gin.Context) {
 	})
 }
 
+func generateToken(user model.User) (string, error) {
+	claims := middleware.Claims{
+		UserID:   user.ID,
+		Username: user.Username,
+		Role:     user.Role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+
+	return token.SignedString(config.JWTSecret)
+}
+
 func Login(c *gin.Context) {
 	var req LoginRequest
 
@@ -169,11 +191,29 @@ func Login(c *gin.Context) {
 		}
 		return
 	}
-	err = bcrypt.CompareHashAndPassword([]byte(req.Password), []byte(user.Password))
+	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password))
 	if err != nil {
 		c.JSON(401, gin.H{"error": "密码错误"})
 		return
 	}
+
+	token, err := generateToken(user)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "生成token失败",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message": "登陆成功",
+		"data": gin.H{
+			"token":    token,
+			"id":       user.ID,
+			"username": user.Username,
+			"phone":    user.Phone,
+			"role":     user.Role,
+		},
+	})
 
 }
 
@@ -222,4 +262,10 @@ func MeView(c *gin.Context) {
 		}
 		c.JSON(200, gin.H{"message": "修改成功"})
 	}
+}
+
+func Logout(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"message": "退出成功",
+	})
 }
