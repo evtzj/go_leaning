@@ -33,7 +33,7 @@ type OrderListItem struct {
 }
 
 type UpdataOrderStatusRequest struct {
-	Status model.OrderStatus `json:"statsus" binding:"required"`
+	Status model.OrderStatus `json:"status" binding:"required"`
 }
 
 func CreateOrder(c *gin.Context) {
@@ -157,7 +157,8 @@ func isValidOrderStatus(status model.OrderStatus) bool {
 	}
 }
 
-func UpdataOrderStatus(c *gin.Context) {
+func UpdateOrderStatus(c *gin.Context) {
+
 	orderID := c.Param("id")
 
 	var req UpdataOrderStatusRequest
@@ -166,7 +167,7 @@ func UpdataOrderStatus(c *gin.Context) {
 		return
 	}
 
-	if isValidOrderStatus(req.Status) {
+	if !isValidOrderStatus(req.Status) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "定档状态错误",
 		})
@@ -180,6 +181,17 @@ func UpdataOrderStatus(c *gin.Context) {
 		})
 		return
 	}
+
+	role := c.GetString("role")
+	userID := c.GetUint("userID")
+
+	if !canUpdataOrderStatus(role, userID, order, req.Status) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"message": "没有权限修改订单状态",
+		})
+		return
+	}
+
 	order.Status = req.Status
 
 	if err := database.DB.Save(&order).Error; err != nil {
@@ -196,4 +208,35 @@ func UpdataOrderStatus(c *gin.Context) {
 			"status": order.Status,
 		},
 	})
+}
+
+func canUpdataOrderStatus(role string, userID uint, order model.Order, newStatus model.OrderStatus) bool {
+	if role == "admin" {
+		return true
+	}
+
+	if role == "student" {
+		if order.StudentID != userID {
+			return false
+		}
+
+		return newStatus == model.OrderStatusCancelled
+	}
+
+	if role == "teacher" {
+		var teacher model.TeacherProfile
+		if err := database.DB.Where("user_id = ?", userID).First(&teacher).Error; err != nil {
+			return false
+		}
+
+		if order.TeacherID != teacher.ID {
+			return false
+		}
+
+		return newStatus == model.OrderStatusConfirmed ||
+			newStatus == model.OrderStatusInProgress ||
+			newStatus == model.OrderStatusCompleted
+	}
+
+	return false
 }
