@@ -17,4 +17,5 @@ func OrderRouter(group *gin.RouterGroup) {
 	auto.POST("/create", handler.CreateOrder)
 	auto.GET("", handler.ListOrders)
 	auto.GET("/:id", handler.ViewOrder)
+	auto.PUT("/:id/status", handler.UpdataOrderStatus)
 }

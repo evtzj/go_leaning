@@ -32,6 +32,10 @@ type OrderListItem struct {
 	Remarks         *string           `json:"remarks"`
 }
 
+type UpdataOrderStatusRequest struct {
+	Status model.OrderStatus `json:"statsus" binding:"required"`
+}
+
 func CreateOrder(c *gin.Context) {
 	var req CreateOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -138,4 +142,58 @@ func ViewOrder(c *gin.Context) {
 		},
 	})
 
+}
+
+func isValidOrderStatus(status model.OrderStatus) bool {
+	switch status {
+	case model.OrderStatusCancelled,
+		model.OrderStatusCompleted,
+		model.OrderStatusConfirmed,
+		model.OrderStatusInProgress,
+		model.OrderStatusPending:
+		return true
+	default:
+		return false
+	}
+}
+
+func UpdataOrderStatus(c *gin.Context) {
+	orderID := c.Param("id")
+
+	var req UpdataOrderStatusRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"message": "参数错误"})
+		return
+	}
+
+	if isValidOrderStatus(req.Status) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "定档状态错误",
+		})
+		return
+	}
+
+	var order model.Order
+	if err := database.DB.First(&order, orderID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"message": "订单不存在",
+		})
+		return
+	}
+	order.Status = req.Status
+
+	if err := database.DB.Save(&order).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "订单状态修改失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "订单修改成功",
+		"data": gin.H{
+			"id":     orderID,
+			"status": order.Status,
+		},
+	})
 }
