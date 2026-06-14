@@ -16,7 +16,7 @@ type CreateOrderRequest struct {
 	Duration      int       `json:"duration" binding:"required,min=1"`
 	Price         float64   `json:"price" binding:"required,min=0"`
 	Address       string    `json:"address" binding:"required"`
-	Remarks       string    `json:"remarks" binding:"required"`
+	Remarks       string    `json:"remarks"`
 }
 
 type OrderListItem struct {
@@ -32,7 +32,7 @@ type OrderListItem struct {
 	Remarks         *string           `json:"remarks"`
 }
 
-type UpdataOrderStatusRequest struct {
+type UpdateOrderStatusRequest struct {
 	Status model.OrderStatus `json:"status" binding:"required"`
 }
 
@@ -42,16 +42,28 @@ func CreateOrder(c *gin.Context) {
 		c.JSON(400, gin.H{"message": "参数错误"})
 		return
 	}
+
+	if c.GetString("role") != "student" {
+		c.JSON(http.StatusForbidden, gin.H{"message": "只有学生可以创建订单"})
+		return
+	}
+
+	var teacher model.TeacherProfile
+	if err := database.DB.First(&teacher, req.TeacherID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"message": "老师不存在"})
+		return
+	}
+
 	//检查订单是否存在
-	student_id := c.GetUint("userID")
+	studentID := c.GetUint("userID")
 	var count int64
-	database.DB.Model(&model.Order{}).Where("student_id = ? AND teacher_id = ? AND scheduled_time = ?", student_id, req.TeacherID, req.ScheduledTime).Count(&count)
+	database.DB.Model(&model.Order{}).Where("student_id = ? AND teacher_id = ? AND scheduled_time = ?", studentID, req.TeacherID, req.ScheduledTime).Count(&count)
 	if count > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "订单已经存在"})
 		return
 	}
 	order := model.Order{
-		StudentID:     student_id,
+		StudentID:     studentID,
 		TeacherID:     req.TeacherID,
 		Subject:       req.Subject,
 		Duration:      req.Duration,
@@ -117,24 +129,39 @@ func ListOrders(c *gin.Context) {
 }
 
 func ViewOrder(c *gin.Context) {
-	OrderID := c.Param("id")
+	orderID := c.Param("id")
 
 	var order model.Order
-	if err := database.DB.First(&order, OrderID).Error; err != nil {
+	if err := database.DB.First(&order, orderID).Error; err != nil {
 		c.JSON(404, gin.H{"message": "订单不存在"})
 		return
 	}
+
+	role := c.GetString("role")
+	userID := c.GetUint("userID")
+	if !canViewOrder(role, userID, order) {
+		c.JSON(http.StatusForbidden, gin.H{"message": "没有权限查看该订单"})
+		return
+	}
+
 	var student model.User
 	var teacher model.TeacherProfile
-	database.DB.First(&student, order.StudentID)
-	database.DB.Preload("User").First(&teacher, order.TeacherID)
+	if err := database.DB.First(&student, order.StudentID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"message": "学生不存在"})
+		return
+	}
+	if err := database.DB.Preload("User").First(&teacher, order.TeacherID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"message": "老师不存在"})
+		return
+	}
+
 	c.JSON(200, gin.H{
 		"message": "查询成功",
 		"data": gin.H{
 			"student_username": student.Username,
 			"teacher_username": teacher.User.Username,
 			"subject":          order.Subject,
-			"scheduledTime":    order.ScheduledTime,
+			"scheduled_time":   order.ScheduledTime,
 			"duration":         order.Duration,
 			"price":            order.Price,
 			"address":          order.Address,
@@ -158,10 +185,9 @@ func isValidOrderStatus(status model.OrderStatus) bool {
 }
 
 func UpdateOrderStatus(c *gin.Context) {
-
 	orderID := c.Param("id")
 
-	var req UpdataOrderStatusRequest
+	var req UpdateOrderStatusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"message": "参数错误"})
 		return
@@ -169,7 +195,7 @@ func UpdateOrderStatus(c *gin.Context) {
 
 	if !isValidOrderStatus(req.Status) {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "定档状态错误",
+			"message": "订单状态错误",
 		})
 		return
 	}
@@ -185,7 +211,7 @@ func UpdateOrderStatus(c *gin.Context) {
 	role := c.GetString("role")
 	userID := c.GetUint("userID")
 
-	if !canUpdataOrderStatus(role, userID, order, req.Status) {
+	if !canUpdateOrderStatus(role, userID, order, req.Status) {
 		c.JSON(http.StatusForbidden, gin.H{
 			"message": "没有权限修改订单状态",
 		})
@@ -204,32 +230,45 @@ func UpdateOrderStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "订单修改成功",
 		"data": gin.H{
-			"id":     orderID,
+			"id":     order.ID,
 			"status": order.Status,
 		},
 	})
 }
 
-func canUpdataOrderStatus(role string, userID uint, order model.Order, newStatus model.OrderStatus) bool {
+func canViewOrder(role string, userID uint, order model.Order) bool {
 	if role == "admin" {
 		return true
 	}
 
 	if role == "student" {
-		if order.StudentID != userID {
-			return false
-		}
-
-		return newStatus == model.OrderStatusCancelled
+		return order.StudentID == userID
 	}
 
 	if role == "teacher" {
-		var teacher model.TeacherProfile
-		if err := database.DB.Where("user_id = ?", userID).First(&teacher).Error; err != nil {
-			return false
-		}
+		teacherID, ok := teacherProfileIDByUserID(userID)
+		return ok && order.TeacherID == teacherID
+	}
 
-		if order.TeacherID != teacher.ID {
+	return false
+}
+
+func canUpdateOrderStatus(role string, userID uint, order model.Order, newStatus model.OrderStatus) bool {
+	if !canTransitionOrderStatus(order.Status, newStatus) {
+		return false
+	}
+
+	if role == "admin" {
+		return true
+	}
+
+	if role == "student" {
+		return order.StudentID == userID && newStatus == model.OrderStatusCancelled
+	}
+
+	if role == "teacher" {
+		teacherID, ok := teacherProfileIDByUserID(userID)
+		if !ok || order.TeacherID != teacherID {
 			return false
 		}
 
@@ -239,4 +278,32 @@ func canUpdataOrderStatus(role string, userID uint, order model.Order, newStatus
 	}
 
 	return false
+}
+
+func canTransitionOrderStatus(currentStatus, newStatus model.OrderStatus) bool {
+	if currentStatus == newStatus {
+		return true
+	}
+
+	switch currentStatus {
+	case model.OrderStatusPending:
+		return newStatus == model.OrderStatusConfirmed ||
+			newStatus == model.OrderStatusCancelled
+	case model.OrderStatusConfirmed:
+		return newStatus == model.OrderStatusInProgress ||
+			newStatus == model.OrderStatusCancelled
+	case model.OrderStatusInProgress:
+		return newStatus == model.OrderStatusCompleted
+	default:
+		return false
+	}
+}
+
+func teacherProfileIDByUserID(userID uint) (uint, bool) {
+	var teacher model.TeacherProfile
+	if err := database.DB.Where("user_id = ?", userID).First(&teacher).Error; err != nil {
+		return 0, false
+	}
+
+	return teacher.ID, true
 }

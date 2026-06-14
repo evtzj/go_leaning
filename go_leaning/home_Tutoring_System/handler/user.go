@@ -236,22 +236,26 @@ func MeView(c *gin.Context) {
 				"role":     user.Role,
 			},
 		})
+		return
 	}
-	if c.Request.Method == http.MethodPost {
+
+	if c.Request.Method == http.MethodPost || c.Request.Method == http.MethodPut {
 		var req UpdateMeView
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(400, gin.H{
 				"message": "参数错误",
-				"error":   err,
+				"error":   err.Error(),
 			})
+			return
 		}
 		var user model.User
 		userID := c.GetUint("userID")
 		if err := database.DB.First(&user, userID).Error; err != nil {
 			c.JSON(404, gin.H{
 				"message": "用户不存在",
-				"error":   err,
+				"error":   err.Error(),
 			})
+			return
 		}
 		if req.Username != "" {
 			user.Username = req.Username
@@ -261,7 +265,10 @@ func MeView(c *gin.Context) {
 			return
 		}
 		c.JSON(200, gin.H{"message": "修改成功"})
+		return
 	}
+
+	c.JSON(http.StatusMethodNotAllowed, gin.H{"message": "请求方法不支持"})
 }
 
 func Logout(c *gin.Context) {
